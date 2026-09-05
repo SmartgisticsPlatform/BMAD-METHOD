@@ -61,6 +61,10 @@ If the invocation points to an existing spec file with one of the known `status`
 | `done`          | review again as a fresh follow-up pass |
 | `blocked`       | halt immediately                       |
 
+Direct entry from `done` or `in-review` is review-only: review layers run and small patches may be applied and verified, but findings requiring development or an intent decision halt `blocked` with the current code and commits preserved. The caller owns the repair handoff; the reviewer does not re-derive the implementation.
+
+The runtime `review_only` flag records that ownership boundary. A `done` entry also persists `followup_pass: true` in the spec, so an interrupted `in-review` pass restores its follow-up recommendation rules. Legacy specs without that field retain first-pass recommendation rules. Explicit `ready-for-dev` or `in-progress` entry clears the follow-up state and resumes development.
+
 ### Folder+ID Dispatch
 
 Instead of a spec-file path, the invocation prompt can supply a spec folder and a story id, with no specific spec file path. Any further prompt text (e.g. `invoke_dev_with` guidance a caller appends) is carried forward as extra planning context, not a competing description of the work.
@@ -75,7 +79,7 @@ It then checks `<spec-folder>/stories/<story-id>-*.md` (id-prefix match) to tell
 | Exactly one   | Resume: routes on that file's `status` exactly like the Resume Input table above. A `blocked` status here reports blocking condition `story already blocked`, not `blocked spec supplied` — build-auto discovered the file by id, the caller didn't hand it a blocked spec. A missing or unrecognized `status` halts `blocked` / `unrecognized status in existing story file`. |
 | More than one | Halts `blocked` / `ambiguous story file match`.                                                                                                                                                                                                                                                                                                                                |
 
-A `blocked` story file is permanent: every later dispatch of that id halts with `story already blocked`, even after the cause is fixed. To retry, delete the story file — the id then reads as pending and the next dispatch starts fresh.
+A `blocked` story continues to halt until the caller resolves its blocking condition and explicitly changes the spec status. Preserve the record: use `ready-for-dev` when development is required, or `in-review` when the code is already repaired and ready for another review. Neither transition asserts completion; required implementation, acceptance, and verification work must still finish before `done`.
 
 Whenever planning runs — on a first dispatch, or on a resume of interrupted planning (`draft`) — the workflow also loads every other file matching `<spec-folder>/stories/*.md` and carries forward each one's Code Map, Design Notes, Spec Change Log, Tasks & Acceptance checklist state, and Auto Run Result details as extra planning context, so planning for one story can see what other stories in the same folder have already decided or produced. Resumes that skip planning skip this too.
 
@@ -206,6 +210,7 @@ Typical blocking conditions include:
 - `no subagents`
 - `missing spec_file before implementation`
 - `implementation verification failed`
+- `review requires development` (review-only handoff)
 - `review repair loop exceeded 5 iterations (non-convergence)`
 - `blocked spec supplied` (a directly-invoked spec file already had `status: blocked`)
 - `no stories.yaml found`
@@ -215,7 +220,7 @@ Typical blocking conditions include:
 - `unrecognized status in existing story file`
 - `story already blocked` (folder+id dispatch only — contrast with `blocked spec supplied` above)
 
-An `intent gap` means the captured intent cannot answer a question the run hit — it can halt the planning step (before any code exists) or the review step. When review halts on it, the working tree is reverted as usual, but the attempted change is first saved as a patch file in `{implementation_artifacts}`, referenced from the spec's triage log and the halt output. The patch shows which reading of the intent the run implemented — concrete evidence for repairing the intent. If the attempted reading turns out to be correct, `git apply` the patch and set the spec status to `in-review` to resume review on it instead of re-running from scratch.
+An `intent gap` means the captured intent cannot answer a question the run hit — it can halt planning or review. A review-only pass preserves the current code and records the unresolved question and evidence for the caller. Inline review during development retains its existing behavior: save the attempted change as a patch in `{implementation_artifacts}`, reference it from the triage log, then revert. After the caller resolves the intent, preserved or restored code can re-enter at `in-review`; work that still needs implementation re-enters at `ready-for-dev`.
 
 ## Output Artifacts
 
@@ -230,7 +235,7 @@ For new work, the workflow creates:
 That spec is the contract between planning, implementation, and review. It contains:
 
 - Frontmatter status
-- Frontmatter machine state (`followup_review_recommended`, `warnings`, `deferred`, revision markers)
+- Frontmatter machine state (`followup_pass`, `followup_review_recommended`, `warnings`, `deferred`, revision markers)
 - The immutable `<intent-contract>` block
 - Code map
 - Tasks and acceptance criteria
@@ -265,7 +270,7 @@ This records the terminal status and blocking condition.
 Depending on the route, the workflow may also write:
 
 - `{implementation_artifacts}/epic-<N>-context.md`
-- A patch file preserving the attempted change when the review step halts on `intent gap` (path recorded in the spec's triage log)
+- A patch file preserving the attempted change when inline development review halts on `intent gap` (path recorded in the spec's triage log)
 
 ## Orchestrator Responsibilities
 

@@ -2,7 +2,8 @@
 spec_file: '' # set at runtime once a route resolves it; some HALT branches exit before it is set
 spec_folder: '' # set at runtime under folder+id dispatch only
 story_id: '' # set at runtime under folder+id dispatch only
-followup_pass: '' # set at runtime when a `done` spec is re-dispatched for a follow-up review pass; empty on a first pass
+followup_pass: '' # restored from spec frontmatter on review resume; true for a done-spec follow-up
+review_only: false # direct entry from step-01 to review; inline review after step-03 keeps development ownership
 ---
 
 # Step 1: Clarify and Route
@@ -19,10 +20,10 @@ Use the invocation prompt as the intent.
 
 If the invocation prompt explicitly points to an existing spec file with recognized `status` frontmatter, set `spec_file`, then **EARLY EXIT** to the appropriate step:
 - `draft` → `[[bmad-snapshot:step-02-plan.md]]`
-- `ready-for-dev` or `in-progress` → `[[bmad-snapshot:step-03-implement.md]]`
-- `in-review` → `[[bmad-snapshot:step-04-review.md]]`
+- `ready-for-dev` or `in-progress` → set `followup_pass` to `false` both at runtime and in the spec frontmatter, then `[[bmad-snapshot:step-03-implement.md]]`.
+- `in-review` → set `review_only` to `true`; restore `followup_pass` from the spec frontmatter (missing means `false`), then `[[bmad-snapshot:step-04-review.md]]`. A resumed review cannot re-enter development on its own.
 - `blocked` → HALT with status `blocked` and blocking condition `blocked spec supplied`.
-- `done` → set `review_loop_iteration` to `0` in the frontmatter and set `followup_pass` to `true`, then **EARLY EXIT** to `[[bmad-snapshot:step-04-review.md]]` for a fresh review pass. (A `done` spec is a completed run, so this starts a follow-up review, not a resumption.)
+- `done` → set `review_loop_iteration` to `0` in the frontmatter, set `followup_pass` to `true` both at runtime and in the spec frontmatter, and set `review_only` to `true`, then **EARLY EXIT** to `[[bmad-snapshot:step-04-review.md]]` for a fresh review pass. (A `done` spec is a completed run, so this starts a follow-up review, not a resumption.)
 
 If the invocation prompt instead supplies a spec folder and a story id, with no specific spec file path, this is a **folder+id dispatch**: set `spec_folder` (a `{project-root}`-relative or absolute path) and `story_id` from the prompt. Any further prompt text (e.g. `invoke_dev_with` guidance the caller appended) is additional planning context to carry into step-02 — not a competing description of what to implement.
 
@@ -32,7 +33,7 @@ Look for files matching `{spec_folder}/stories/{story_id}-*.md` (id-prefix match
 - **If more than one matches**, HALT with status `blocked` and blocking condition `ambiguous story file match`.
 - **If exactly one matches**, set `spec_file` to that path.
   - `draft` (planning was interrupted mid-flight): accumulate cross-story context before resuming — load every other file matching `{spec_folder}/stories/*.md` (every match except `{spec_file}` itself), regardless of `status`, and carry forward each one's **Code Map**, **Design Notes**, **Spec Change Log**, **Tasks & Acceptance** checklist state, and **Auto Run Result** details, where present, as additional planning context for step-02. Then **EARLY EXIT** to `[[bmad-snapshot:step-02-plan.md]]`.
-  - Any other recognized `status`: **EARLY EXIT** using the same routing as above, including the `review_loop_iteration` reset and `followup_pass` for `done`. One difference: a `blocked` story HALTs with blocking condition `story already blocked`, not `blocked spec supplied` — the caller did not supply this file; build-auto found it by id.
+  - Any other recognized `status`: **EARLY EXIT** using the same routing as above, including review-only entry, the persisted `followup_pass` state, and the `review_loop_iteration` reset for `done`. One difference: a `blocked` story HALTs with blocking condition `story already blocked`, not `blocked spec supplied` — the caller did not supply this file; build-auto found it by id.
   - `status` missing or unrecognized: HALT with status `blocked` and blocking condition `unrecognized status in existing story file`.
 - **If none matches**, this is the first dispatch for `{story_id}`. The entry's `title` and `description` are the resolved intent. If `{spec_folder}/SPEC.md` does not exist, HALT with status `blocked` and blocking condition `no epic spec found`. Otherwise load it and the files listed in its `companions:` frontmatter as planning context, then accumulate cross-story context the same way as the `draft` case above — load every file matching `{spec_folder}/stories/*.md` (none yet exists for `{story_id}` at this point, so nothing is excluded), regardless of `status`, carrying forward the same fields, where present, as additional planning context for step-02. Then continue to INSTRUCTIONS item 3 below — not `step-03-implement.md`, item 3 of the numbered list in this file (items 1 and 2 do not apply — context and intent are already resolved; item 1.A.5's previous-story continuity scan in particular never runs here, since folder+id dispatch already skips items 1 and 2 entirely — the cross-story accumulation above is its replacement for this dispatch mode).
 
