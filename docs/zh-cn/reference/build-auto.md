@@ -52,6 +52,10 @@ sidebar:
 | `done` | 作为新的 follow-up pass 再 review |
 | `blocked` | 立即 halt |
 
+从 `done` 或 `in-review` 直接进入时，只执行审查：运行各审查层，并可应用和验证小范围补丁；但若发现需要开发工作或意图决策的问题，就保留当前代码和既有提交，以 `blocked` 停止。修复交接由调用方负责，审查者不会重新推导实现。
+
+运行时的 `review_only` 标志表示这一职责边界。从 `done` 进入时，还会在 spec 中保存 `followup_pass: true`，因此中断的 `in-review` 执行在恢复时会沿用后续审查的建议规则。缺少该字段的旧版 spec 保留首轮审查的建议规则。显式以 `ready-for-dev` 或 `in-progress` 进入时，会清除后续审查状态并恢复开发。
+
 ### Folder+ID Dispatch
 
 调用 prompt 可传 spec 文件夹和 story id，而不传 spec 文件路径。任何额外 prompt 文本（例如 caller 追加的 `invoke_dev_with` 指引）作为额外 planning 上下文携带，而不是对工作的 competing 描述。
@@ -66,7 +70,7 @@ workflow 读取 `<spec-folder>/stories.yaml`，查找 `id` 匹配的条目。它
 | 恰好一个 | Resume：按该文件 `status` 路由，与 Resume Input 表相同。此处 `blocked` 报告 blocking condition `story already blocked`，不是 `blocked spec supplied` —— build-auto 通过 id 发现文件，caller 没有 handed blocked spec。缺失或无法识别的 `status` 则 halt `blocked` / `unrecognized status in existing story file`。 |
 | 多于一个 | Halt `blocked` / `ambiguous story file match`。 |
 
-`blocked` story 文件是永久的：该 id 的后续 dispatch 都会 halt `story already blocked`，即使原因已修复。要重试，删除 story 文件 —— id 会读作 pending，下次 dispatch 从头开始。
+`blocked` story 会继续停止，直到调用方解决阻塞原因并显式更改 spec status。请保留记录：需要开发时使用 `ready-for-dev`；代码已修复、可以再次审查时使用 `in-review`。这两种转换都不代表完成；必须完成所有必需的实现、验收和验证工作，才能进入 `done`。
 
 只要 planning 运行 —— 首次 dispatch，或中断 planning（`draft`）的 resume —— workflow 还会加载 `<spec-folder>/stories/*.md` 的每个其他匹配文件，把各自的 Code Map、Design Notes、Spec Change Log、Tasks & Acceptance checklist 状态和 Auto Run Result 细节作为额外 planning 上下文，以便一个 story 的 planning 能看到同文件夹其他 story 已决定或产出的内容。跳过 planning 的 resume 也跳过这一步。
 
@@ -147,6 +151,7 @@ blocked 完成时，workflow 写入：
 - `no subagents`
 - `missing spec_file before implementation`
 - `implementation verification failed`
+- `review requires development`（仅审查执行的交接）
 - `review repair loop exceeded 5 iterations (non-convergence)`
 - `blocked spec supplied`（直接调用的 spec 文件已有 `status: blocked`）
 - `no stories.yaml found`
@@ -156,7 +161,7 @@ blocked 完成时，workflow 写入：
 - `unrecognized status in existing story file`
 - `story already blocked`（仅 folder+id dispatch —— 与上文 `blocked spec supplied` 对比）
 
-`intent gap` 表示 captured intent 无法回答 run 碰到的问题 —— 可在 planning step（尚无任何代码）或 review step halt。review 因此 halt 时，working tree 照常 revert，但 attempted change 先保存为 `{implementation_artifacts}` 中的 patch 文件，从 spec triage log 和 halt 输出引用。patch 展示 run 对 intent 的哪种 reading 被 implement —— 修复 intent 的具体证据。若 attempted reading 其实正确，可 `git apply` patch 并把 spec status 设为 `in-review`，在该基础上 resume review，而不是从头重跑。
+`intent gap` 表示已记录的意图无法回答执行中遇到的问题，可在规划或审查阶段停止。仅审查执行会保留当前代码，并为调用方记录尚未解决的问题和证据。开发过程中的内联审查保留原有行为：先将尝试的变更保存为 `{implementation_artifacts}` 中的补丁文件，在 triage log 中引用，然后回滚。调用方明确意图后，保留或恢复的代码可从 `in-review` 重新进入审查；仍需实现的工作则从 `ready-for-dev` 重新进入。
 
 ## 输出 Artifacts
 
@@ -171,7 +176,7 @@ workflow 总是尽量留下 durable artifact 描述发生了什么。
 该 spec 是 planning、implementation 和 review 之间的 contract，包含：
 
 - Frontmatter status
-- Frontmatter machine state（`followup_review_recommended`、`warnings`、`deferred`、revision markers）
+- Frontmatter machine state（`followup_pass`、`followup_review_recommended`、`warnings`、`deferred`、revision markers）
 - 不可变的 `<intent-contract>` 块
 - Code map
 - Tasks 和 acceptance criteria
@@ -206,7 +211,7 @@ workflow 在尚无 valid `spec_file` 时 halt（folder+id dispatch 外 —— �
 视路由，workflow 还可能写入：
 
 - `{implementation_artifacts}/epic-<N>-context.md`
-- review step 因 `intent gap` halt 时保存 attempted change 的 patch 文件（路径记录在 spec triage log）
+- 开发过程中的内联审查因 `intent gap` 停止时，保存尝试变更的补丁文件（路径记录在 spec triage log）
 
 ## Orchestrator 职责
 

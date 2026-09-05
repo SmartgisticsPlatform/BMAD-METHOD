@@ -52,6 +52,10 @@ Build Auto는 다음 스토리를 선택하거나 백로그 전체를 반복 실
 | `done` | 새로운 후속 검토로 다시 리뷰 |
 | `blocked` | 즉시 중단 |
 
+`done` 또는 `in-review`에서 직접 진입하면 리뷰만 수행합니다. 리뷰 계층을 실행하고 작은 패치를 적용·검증할 수 있지만, 개발 작업이나 의도에 관한 결정이 필요한 발견 사항은 현재 코드와 기존 커밋을 보존한 채 `blocked`로 중단합니다. 수정 작업의 인계는 호출자가 담당하며, 리뷰어는 구현을 새로 도출하지 않습니다.
+
+런타임 `review_only` 플래그는 이 역할 경계를 나타냅니다. `done`으로 진입할 때는 사양에도 `followup_pass: true`를 저장하므로, 중단된 `in-review` 실행을 재개하면 후속 리뷰 권고를 판단하는 규칙이 복원됩니다. 이 필드가 없는 이전 사양은 첫 번째 리뷰의 권고 규칙을 유지합니다. `ready-for-dev` 또는 `in-progress`로 명시적으로 진입하면 후속 리뷰 상태를 지우고 개발을 재개합니다.
+
 ### 폴더+ID 디스패치
 
 호출 프롬프트에 특정 사양 파일 경로 대신 사양 폴더와 스토리 ID를 전달할 수도 있습니다. 이때 호출자가 덧붙인 `invoke_dev_with` 지침 같은 나머지 프롬프트 텍스트는 작업 설명을 대체하지 않고 계획에 필요한 추가 컨텍스트로 전달됩니다.
@@ -66,7 +70,7 @@ Build Auto는 다음 스토리를 선택하거나 백로그 전체를 반복 실
 | 정확히 하나 | 해당 파일의 `status`에 따라 위 표와 같은 방식으로 재개합니다. 여기서 `blocked` 상태는 `blocked spec supplied`가 아니라 `story already blocked` 조건을 보고합니다. 호출자가 차단된 사양을 직접 넘긴 것이 아니라 build-auto가 ID로 파일을 찾았기 때문입니다. `status`가 없거나 인식할 수 없으면 `unrecognized status in existing story file` 조건과 `blocked` 상태로 멈춥니다. |
 | 둘 이상 | `ambiguous story file match` 조건으로 `blocked`에서 멈춥니다. |
 
-`blocked` 상태의 스토리 파일은 영구 차단된 것으로 취급됩니다. 원인을 고친 뒤에도 같은 ID를 다시 디스패치하면 항상 `story already blocked`로 멈춥니다. 다시 시도하려면 스토리 파일을 삭제하세요. 그러면 해당 ID는 대기 상태로 돌아가고 다음 디스패치가 처음부터 시작됩니다.
+`blocked` 스토리는 호출자가 차단 원인을 해결하고 사양 상태를 명시적으로 변경할 때까지 계속 멈춥니다. 기록은 보존하세요. 개발이 필요하면 `ready-for-dev`를, 코드가 이미 수정되어 다시 리뷰할 준비가 되었으면 `in-review`를 사용합니다. 어느 전환도 완료를 뜻하지 않습니다. 필수 구현·인수 조건·검증 작업을 모두 마쳐야 `done`이 될 수 있습니다.
 
 계획 단계가 실행될 때마다 워크플로는 `<spec-folder>/stories/*.md` 패턴에 맞는 다른 스토리 파일도 모두 읽습니다. 첫 디스패치뿐 아니라 `draft` 상태에서 중단된 계획을 재개할 때도 마찬가지입니다. 각 파일의 `Code Map`, `Design Notes`, `Spec Change Log`, `Tasks & Acceptance` 체크리스트 상태, `Auto Run Result` 세부 내용을 추가 계획 컨텍스트로 가져옵니다. 이 덕분에 같은 폴더의 다른 스토리가 이미 결정하거나 만든 내용을 현재 계획에 반영할 수 있습니다. 계획 단계를 건너뛰는 재개 경로에서는 이 과정도 생략합니다.
 
@@ -179,6 +183,7 @@ AI 코딩 세션이 작업 단위마다 Build Auto 작업자 하나를 배정하
 - `no subagents`
 - `missing spec_file before implementation`
 - `implementation verification failed`
+- `review requires development`(리뷰 전용 실행의 인계)
 - `review repair loop exceeded 5 iterations (non-convergence)`
 - `blocked spec supplied`(직접 호출한 사양 파일이 이미 `status: blocked`였던 경우)
 - `no stories.yaml found`
@@ -188,7 +193,7 @@ AI 코딩 세션이 작업 단위마다 Build Auto 작업자 하나를 배정하
 - `unrecognized status in existing story file`
 - `story already blocked`(폴더+ID 디스패치 전용. 위의 `blocked spec supplied`와 다릅니다)
 
-`intent gap`은 실행 중 마주친 질문에 기록된 의도만으로 답할 수 없는 상태입니다. 코드가 아직 없는 계획 단계나 리뷰 단계에서 멈출 수 있습니다. 리뷰 중 이 조건으로 멈추면 작업 트리를 평소처럼 되돌립니다. 다만 시도했던 변경은 먼저 `{implementation_artifacts}` 아래의 패치 파일로 저장하고 사양의 분류 기록과 중단 출력에 경로를 기록합니다. 이 패치는 워크플로가 의도를 어떻게 해석해 구현했는지 보여 주는 구체적인 근거입니다. 그 해석이 맞다면 `git apply`로 패치를 적용하고 사양 상태를 `in-review`로 바꾸세요. 처음부터 다시 실행하지 않고 해당 변경의 리뷰를 이어갈 수 있습니다.
+`intent gap`은 실행 중 마주친 질문에 기록된 의도만으로 답할 수 없는 상태이며, 계획이나 리뷰 단계에서 멈출 수 있습니다. 리뷰 전용 실행은 현재 코드를 보존하고 해결되지 않은 질문과 근거를 호출자에게 남깁니다. 개발 중 이어서 수행하는 리뷰는 기존 방식을 유지합니다. 시도했던 변경을 `{implementation_artifacts}` 아래의 패치 파일로 저장하고 분류 기록에서 참조한 뒤 되돌립니다. 호출자가 의도를 명확히 한 후에는 보존하거나 복원한 코드를 `in-review`로 다시 리뷰할 수 있습니다. 구현이 더 필요한 작업은 `ready-for-dev`로 재개합니다.
 
 ## 출력 산출물
 
@@ -203,7 +208,7 @@ AI 코딩 세션이 작업 단위마다 Build Auto 작업자 하나를 배정하
 이 사양은 계획, 구현, 리뷰를 잇는 계약으로 다음 내용을 담습니다.
 
 - 프런트매터 상태
-- 프런트매터의 기계 상태(`followup_review_recommended`, `warnings`, `deferred`, 리비전 표시)
+- 프런트매터의 기계 상태(`followup_pass`, `followup_review_recommended`, `warnings`, `deferred`, 리비전 표시)
 - 수정할 수 없는 `<intent-contract>` 블록
 - 코드 맵
 - 작업과 인수 기준
@@ -238,7 +243,7 @@ AI 코딩 세션이 작업 단위마다 Build Auto 작업자 하나를 배정하
 경로에 따라 워크플로가 다음도 쓸 수 있습니다.
 
 - `{implementation_artifacts}/epic-<N>-context.md`
-- 리뷰 단계가 `intent gap`으로 멈출 때 시도했던 변경을 보존한 패치 파일(사양의 분류 기록에 경로 기록)
+- 개발 중 이어지는 리뷰가 `intent gap`으로 멈출 때 시도했던 변경을 보존한 패치 파일(사양의 분류 기록에 경로 기록)
 
 ## 오케스트레이터 책임
 
